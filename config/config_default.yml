@@ -1,0 +1,294 @@
+# ======================================================================
+# ETL MULTIMÍDIA — CONFIGURAÇÃO CANÔNICA
+# ======================================================================
+# Este arquivo define o comportamento completo do ETL.
+# Nenhuma regra de negócio deve existir apenas no código.
+# O código apenas executa, valida e registra o que está declarado aqui.
+# ======================================================================
+
+
+# ----------------------------------------------------------------------
+# Identidade da aplicação
+# ----------------------------------------------------------------------
+app:
+  name: cxm2
+  description: >
+    ETL de preservação e classificação de arquivos multimídia,
+    orientado a configuração, não destrutivo e auditável.
+  version: "0.2"
+  mode: production          # production | dry-run | audit-only
+  timezone: "America/Sao_Paulo"
+
+
+# ----------------------------------------------------------------------
+# Caminhos base
+# ----------------------------------------------------------------------
+paths:
+  # Pasta de entrada bruta (imutável conceitualmente)
+  source_root: /home/tela-mx/Downloads/Warpinator/
+
+  # Pasta de saída organizada (append-only)
+  destination_root: /home/tela-mx/Downloads/organizadas/
+
+
+# ----------------------------------------------------------------------
+# CLASSIFICAÇÃO LÓGICA
+# ----------------------------------------------------------------------
+# Esta seção define COMO arquivos são classificados.
+# O ETL apenas resolve o media_type; ele não decide destino aqui.
+# ----------------------------------------------------------------------
+classification:
+  media_types:
+    imagens:
+      description: "Imagens digitais (câmeras, smartphones, scans)"
+      extensions:
+        - jpg
+        - jpeg
+        - png
+        - heic
+        - heif
+        - webp
+        - gif
+        - bmp
+        - tif
+        - tiff
+        - dng
+        - raw
+
+    videos:
+      description: "Vídeos domésticos e gravações de dispositivos móveis"
+      extensions:
+        - mp4
+        - mov
+        - 3gp
+        - mkv
+        - webm
+        - avi
+        - mts
+        - m2ts
+        - wmv
+        - flv
+        - mpg
+        - mpeg
+
+    audios:
+      description: "Áudios, gravações, voice notes e música"
+      extensions:
+        - mp3
+        - m4a
+        - wav
+        - aac
+        - ogg
+        - opus
+        - amr
+        - flac
+        - wma
+        - mid
+        - midi
+
+
+# ----------------------------------------------------------------------
+# ROTEAMENTO DECLARATIVO
+# ----------------------------------------------------------------------
+# Esta seção define PARA ONDE cada media_type vai.
+# Todo media_type deve ter rota explícita.
+# O código deve validar isso antes da execução.
+# ----------------------------------------------------------------------
+routing:
+  imagens:
+    layout: "<root>/<ano>/<mes>/imagens"
+
+  videos:
+    layout: "<root>/<ano>/<mes>/videos"
+
+  audios:
+    layout: "<root>/<ano>/<mes>/audios"
+
+  # Fallback explícito e seguro
+  default:
+    layout: "<root>/<ano>/OUTROS"
+
+
+# ----------------------------------------------------------------------
+# DATA CANÔNICA
+# ----------------------------------------------------------------------
+# Define a regra de decisão de ANO/MÊS.
+# A data é usada apenas para organização, não para timestamp exato.
+# ----------------------------------------------------------------------
+date_canonical:
+  # Ordem de confiança (regra fechada)
+  priority:
+    - metadata
+    - filename
+    - filesystem
+
+  metadata:
+    imagens:
+      fields:
+        - DateTimeOriginal
+        - CreateDate
+        - ModifyDate
+
+    videos:
+      fields:
+        - CreateDate
+        - MediaCreateDate
+
+    audios:
+      fields:
+        - RecordingTime
+        - CreateDate
+
+  filename:
+    patterns:
+      - YYYYMMDD
+      - YYYYMMDD_HHMMSS
+      - IMG_YYYYMMDD
+      - VID-YYYYMMDD
+
+  filesystem:
+    fields:
+      - creation_time
+      - modification_time
+
+
+# ----------------------------------------------------------------------
+# POLÍTICA DE CONFLITO DE NOMES
+# ----------------------------------------------------------------------
+# Garante não destrutividade absoluta.
+# ----------------------------------------------------------------------
+conflict_policy:
+  overwrite: false
+  rename_strategy: append_datetime
+  datetime_format: "%Y-%m-%d_%H-%M-%S"
+
+
+# ----------------------------------------------------------------------
+# NORMALIZAÇÃO SEGURA DE NOMES (OneDrive)
+# ----------------------------------------------------------------------
+# Aplica regras apenas no destino.
+# O nome original nunca é alterado na origem.
+# ----------------------------------------------------------------------
+safe_filename:
+  enabled: true
+
+  normalization:
+    unicode: NFKD
+    lowercase: false
+    trim_spaces: true
+
+  replace:
+    forbidden_chars: ['<', '>', ':', '"', '/', '\\', '|', '?', '*']
+    replacement_char: "_"
+
+  limits:
+    max_length: 240
+    preserve_extension: true
+
+  deduplicate_spaces: true
+  remove_control_chars: true
+
+# ----------------------------------------------------------------------
+# METADATA PROVIDER
+# ----------------------------------------------------------------------
+# Metada provider é referenciado no profile_default.yml
+# aqui fazemos referência ao profile para que a plicação
+# possa tomar as decisões
+# ----------------------------------------------------------------------
+metadata:
+  provider_profile: profile_default
+  provider_file: ./profile_default.yml
+
+# ----------------------------------------------------------------------
+# LOGGING E CONTRATO DO LOG
+# ----------------------------------------------------------------------
+# O log é parte essencial do resultado do ETL.
+# OUTPUT sem log é considerado incompleto.
+# ----------------------------------------------------------------------
+logging:
+  format: csv
+
+  file:
+    enabled: true
+    path_template: "<root>/etl-multimidia_<timestamp>.log"
+    timestamp_format: "%Y-%m-%d_%H-%M-%S"
+
+  # Contrato estável do CSV
+  schema:
+    base_columns:
+      - run_id
+      - timestamp
+      - event_type
+      - level
+      - source_path
+      - destination_path
+      - details
+
+    mandatory_columns:
+      - run_id
+      - timestamp
+      - event_type
+      - level
+      - source_path
+      - destination_path
+      - details
+
+    # Campo de extensão para evolução sem quebra de schema
+    details:
+      format: key_value
+      separator: ";"
+      kv_separator: "="
+
+# ----------------------------------------------------------------------
+# VOCABULÁRIO DE EVENTOS (CONTRATO SEMÂNTICO)
+# ----------------------------------------------------------------------
+# Enum fechado de event_type.
+# O código deve validar logs contra esta lista.
+# ----------------------------------------------------------------------
+events:
+  global:
+    - RUN_STARTED
+    - RUN_COMPLETED
+    - VALIDATION_RESULT
+
+  per_file:
+    - FILE_DISCOVERED
+    - MEDIA_TYPE_RESOLVED
+    - DATE_CANONICAL_RESOLVED
+    - DESTINATION_PATH_RESOLVED
+    - SAFE_FILENAME_APPLIED
+    - NAME_CONFLICT_RESOLVED
+    - FILE_COPIED
+
+  terminal:
+    - FILE_CLASSIFIED
+    - FILE_SENT_TO_OUTROS
+
+
+# ----------------------------------------------------------------------
+# VALIDAÇÕES FORMAIS
+# ----------------------------------------------------------------------
+# Regras que garantem integridade do ETL.
+# A validação pode ser feita apenas lendo o CSV.
+# ----------------------------------------------------------------------
+validation:
+  enabled: true
+
+  invariants:
+    # Todo arquivo descoberto deve ter exatamente um evento terminal
+    one_terminal_event_per_file: true
+
+    # Não pode existir event_type fora do enum declarado
+    event_type_must_be_known: true
+
+    # Todo media_type classificado deve ter rota válida
+    routing_must_exist_for_media_type: true
+
+  checks:
+    - source_file_count
+    - destination_file_count
+    - source_vs_destination_mapping
+    - terminal_event_coverage
+
+  # Se verdadeiro, qualquer falha marca a execução como inválida
+  fail_on_mismatch: true

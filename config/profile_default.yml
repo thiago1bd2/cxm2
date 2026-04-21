@@ -1,0 +1,72 @@
+providers:
+
+  exiftool_default:
+    type: external_command
+    description: >
+      Provider padrão baseado em exiftool.
+      Retorna metadados normalizados em JSON e mapeia campos por media_type
+      para alimentar canonical_date.
+
+    executable: exiftool
+    output_format: json
+
+    execution:
+      timeout_seconds: 10
+      one_file_per_call: true
+
+    # Modelo canônico que o ETL espera receber do provider
+    # (o provider deve sempre tentar preencher isso)
+    canonical_model:
+      canonical_date:
+        description: "Data de captura/criação para determinar ANO/MÊS"
+        return_type: "datetime"
+
+    # Mapeamento: media_type -> como derivar canonical_date a partir do JSON do provider
+    # Confidence: peso da confiança do campo retornado pelo provider
+    mapping:
+
+      imagens:
+        canonical_date:
+          # Ordem de tentativa dos campos dentro do JSON retornado
+          # O primeiro campo existente e parseável vence
+          candidates:
+            - field: "DateTimeOriginal"
+              confidence: 3
+            - field: "CreateDate"
+              confidence: 2
+            - field: "ModifyDate"
+              confidence: 1
+          parse:
+            # O provider (código) sabe aplicar estes parse rules
+            # Aqui só declaramos a intenção (contrato)
+            timezone_strategy: preserve
+
+      videos:
+        canonical_date:
+          candidates:
+            - field: "MediaCreateDate"
+              confidence: 4
+            - field: "CreateDate"
+              confidence: 3
+            - field: "TrackCreateDate"
+              confidence: 2
+            - field: "ModifyDate"
+              confidence: 1
+          parse:
+            timezone_strategy: preserve
+
+      audios:
+        canonical_date:
+          candidates:
+            - field: "RecordingTime"
+              confidence: 3
+            - field: "CreateDate"
+              confidence: 2
+            - field: "ModifyDate"
+              confidence: 1
+          parse:
+            timezone_strategy: preserve
+
+    # Comportamento de fallback dentro do provider (antes do ETL aplicar filename/filesystem)
+    provider_fallback:
+      if_no_candidate_found: "return_null"
